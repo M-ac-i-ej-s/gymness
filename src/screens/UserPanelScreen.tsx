@@ -18,6 +18,10 @@ export const UserPanelScreen = ({ navigation }: Props) => {
   const [nicknameError, setNicknameError] = useState<string | null>(null);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [isPhotoLoading, setIsPhotoLoading] = useState(false);
+  const [notificationsEnabledValue, setNotificationsEnabledValue] = useState(Boolean(userProfile?.notificationsEnabled ?? true));
+  const [isPrivateValue, setIsPrivateValue] = useState(Boolean(userProfile?.isPrivate ?? false));
+  const [isSavingNotifications, setIsSavingNotifications] = useState(false);
+  const [isSavingPrivate, setIsSavingPrivate] = useState(false);
 
   // Subscribe to friend requests
   useEffect(() => {
@@ -31,6 +35,32 @@ export const UserPanelScreen = ({ navigation }: Props) => {
 
     return unsubscribe;
   }, [user?.uid]);
+
+  // Keep local switch state in sync with Firestore updates while allowing instant UI toggles.
+  useEffect(() => {
+    setNotificationsEnabledValue(Boolean(userProfile?.notificationsEnabled ?? true));
+    setIsPrivateValue(Boolean(userProfile?.isPrivate ?? false));
+  }, [userProfile?.notificationsEnabled, userProfile?.isPrivate]);
+
+  const handleNotificationsToggle = async (value: boolean) => {
+    setNotificationsEnabledValue(value);
+    setIsSavingNotifications(true);
+    try {
+      await setNotificationsEnabled(value);
+    } finally {
+      setIsSavingNotifications(false);
+    }
+  };
+
+  const handlePrivateToggle = async (value: boolean) => {
+    setIsPrivateValue(value);
+    setIsSavingPrivate(true);
+    try {
+      await setIsPrivate(value);
+    } finally {
+      setIsSavingPrivate(false);
+    }
+  };
 
   const handleEditNickname = () => {
     setNewNickname(userProfile?.nickname || '');
@@ -86,17 +116,14 @@ export const UserPanelScreen = ({ navigation }: Props) => {
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.headerCard}>
         <Pressable onPress={handleChangePhoto} style={styles.photoContainer}>
-          {isAuthenticating ? (
-            <View style={styles.profilePhoto}>
-              <ActivityIndicator size="large" color={colors.primary} />
-            </View>
-          ) : userProfile?.photoURL ? (
+          {userProfile?.photoURL ? (
             <>
               <Image 
                 source={{ uri: userProfile.photoURL }} 
                 style={styles.profilePhoto}
                 onLoadStart={() => setIsPhotoLoading(true)}
                 onLoadEnd={() => setIsPhotoLoading(false)}
+                onError={() => setIsPhotoLoading(false)}
               />
               {isPhotoLoading && (
                 <View style={styles.photoLoadingOverlay}>
@@ -155,10 +182,12 @@ export const UserPanelScreen = ({ navigation }: Props) => {
           <Text style={styles.optionHint}>Włącz / wyłącz powiadomienia</Text>
         </View>
         <Switch
-          value={Boolean(userProfile?.notificationsEnabled ?? true)}
-          onValueChange={setNotificationsEnabled}
+          value={notificationsEnabledValue}
+          onValueChange={handleNotificationsToggle}
+          disabled={isSavingNotifications}
           trackColor={{ false: colors.border, true: colors.primary }}
           thumbColor={colors.card}
+          style={styles.thinSwitch}
         />
       </View>
 
@@ -168,10 +197,12 @@ export const UserPanelScreen = ({ navigation }: Props) => {
           <Text style={styles.optionHint}>Pracuj w ciszy, bez karty społeczności</Text>
         </View>
         <Switch
-          value={Boolean(userProfile?.isPrivate ?? false)}
-          onValueChange={setIsPrivate}
+          value={isPrivateValue}
+          onValueChange={handlePrivateToggle}
+          disabled={isSavingPrivate}
           trackColor={{ false: colors.border, true: colors.primary }}
           thumbColor={colors.card}
+          style={styles.thinSwitch}
         />
       </View>
 
@@ -400,6 +431,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
     color: colors.textSecondary,
     fontSize: 13,
+  },
+  thinSwitch: {
+    transform: [{ scaleX: 0.8 }, { scaleY: 1.0 }],
   },
   logoutButton: {
     backgroundColor: colors.danger,

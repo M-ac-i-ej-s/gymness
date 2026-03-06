@@ -82,6 +82,25 @@ const toCommunityPost = (id: string, data: any): CommunityPost => ({
 const removeUndefinedFields = <T extends Record<string, any>>(data: T): Partial<T> =>
   Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined)) as Partial<T>;
 
+const isValidFirestoreUserId = (value: unknown): value is string => {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length < 6) {
+    return false;
+  }
+
+  // Guard against placeholder/template values persisted to Firestore.
+  if (trimmed.includes('{') || trimmed.includes('}')) {
+    return false;
+  }
+
+  return true;
+};
+
 const FRIEND_REQUEST_COOLDOWN_MS = 15_000;
 const friendRequestCooldownBySender = new Map<string, number>();
 
@@ -381,13 +400,23 @@ export const repository = {
     try {
       const friendsRef = collection(db, 'users', userId, 'friends');
       const snapshot = await getDocs(friendsRef);
-      
-      return snapshot.docs.map((doc) => ({
-        userId: doc.data().userId,
-        nickname: doc.data().nickname,
-        photoURL: doc.data().photoURL,
-        addedAt: doc.data().addedAt,
-      }));
+
+      return snapshot.docs
+        .map((doc) => ({
+          userId: doc.data().userId,
+          nickname: doc.data().nickname,
+          photoURL: doc.data().photoURL,
+          addedAt: doc.data().addedAt,
+        }))
+        .filter((friend) => {
+          const valid = isValidFirestoreUserId(friend.userId);
+
+          if (!valid) {
+            console.warn('Skipping friend record with invalid userId:', friend.userId);
+          }
+
+          return valid;
+        }) as Friend[];
     } catch (error) {
       console.error('Error fetching friends:', error);
       return [];
@@ -422,7 +451,6 @@ export const repository = {
   async fetchFriendWorkoutSessions(friendUserId: string, itemLimit = 20): Promise<(WorkoutSession & { friendId: string; friendNickname?: string; friendPhotoURL?: string })[]> {
     try {
       // Get friend's profile info
-      const friendRef = doc(db, 'users', friendUserId);
       const friendSnapshot = await getDocs(query(collection(db, 'users'), where('__name__', '==', friendUserId)));
       
       let friendNickname: string | undefined;
@@ -461,6 +489,10 @@ export const repository = {
       const allWorkouts: (WorkoutSession & { friendId: string; friendNickname?: string; friendPhotoURL?: string })[] = [];
       
       for (const friend of friends) {
+        if (!isValidFirestoreUserId(friend.userId)) {
+          continue;
+        }
+
         const sessions = await this.fetchFriendWorkoutSessions(friend.userId, 10);
         allWorkouts.push(...sessions.map(s => ({
           ...s,

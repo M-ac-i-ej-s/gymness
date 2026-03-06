@@ -212,7 +212,7 @@ export const FindUsersScreen = ({ navigation }: Props) => {
       <View style={styles.userContainer}>
         <View style={styles.userInfo}>
           {item.photoURL ? (
-            <View style={styles.avatarContainer}>
+            <View style={[styles.avatarContainer, styles.userAvatarContainer]}>
               <Image 
                 source={{ uri: item.photoURL }} 
                 style={styles.avatar}
@@ -259,7 +259,7 @@ export const FindUsersScreen = ({ navigation }: Props) => {
       <View style={styles.requestContainer}>
         <View style={styles.requestInfo}>
           {item.fromPhotoURL ? (
-            <View style={styles.avatarContainer}>
+            <View style={[styles.avatarContainer, styles.requestAvatarContainer]}>
               <Image 
                 source={{ uri: item.fromPhotoURL }} 
                 style={styles.requestAvatar}
@@ -267,7 +267,7 @@ export const FindUsersScreen = ({ navigation }: Props) => {
                 onLoadEnd={() => setLoadingAvatars(prev => ({ ...prev, [`req_${item.id}`]: false }))}
               />
               {loadingAvatars[`req_${item.id}`] && (
-                <View style={[styles.avatarLoadingOverlay, styles.requestAvatarLoadingOverlay]}>
+                <View style={styles.avatarLoadingOverlay}>
                   <ActivityIndicator size="small" color={colors.primary} />
                 </View>
               )}
@@ -315,7 +315,7 @@ export const FindUsersScreen = ({ navigation }: Props) => {
       <View style={styles.friendContainer}>
         <View style={styles.friendInfo}>
           {item.photoURL ? (
-            <View style={styles.avatarContainer}>
+            <View style={[styles.avatarContainer, styles.friendAvatarContainer]}>
               <Image 
                 source={{ uri: item.photoURL }} 
                 style={styles.friendAvatar}
@@ -323,7 +323,7 @@ export const FindUsersScreen = ({ navigation }: Props) => {
                 onLoadEnd={() => setLoadingAvatars(prev => ({ ...prev, [`friend_${item.userId}`]: false }))}
               />
               {loadingAvatars[`friend_${item.userId}`] && (
-                <View style={[styles.avatarLoadingOverlay, styles.friendAvatarLoadingOverlay]}>
+                <View style={styles.avatarLoadingOverlay}>
                   <ActivityIndicator size="small" color={colors.primary} />
                 </View>
               )}
@@ -493,7 +493,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    marginRight: 10,
   },
   requestDetails: {
     flex: 1,
@@ -609,7 +608,6 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    marginRight: 12,
   },
   avatarPlaceholder: {
     backgroundColor: colors.bg,
@@ -650,6 +648,25 @@ const styles = StyleSheet.create({
   },
   avatarContainer: {
     position: 'relative',
+    overflow: 'hidden',
+  },
+  userAvatarContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 12,
+  },
+  requestAvatarContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 10,
+  },
+  friendAvatarContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 10,
   },
   avatarLoadingOverlay: {
     position: 'absolute',
@@ -657,13 +674,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: 28,
+    borderRadius: 999,
     backgroundColor: 'rgba(0,0,0,0.3)',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  requestAvatarLoadingOverlay: {
-    borderRadius: 26,
   },
   friendsSection: {
     backgroundColor: colors.card,
@@ -698,10 +712,6 @@ const styles = StyleSheet.create({
   friendAvatar: {
     width: 36,
     height: 36,
-    borderRadius: 18,
-    marginRight: 10,
-  },
-  friendAvatarLoadingOverlay: {
     borderRadius: 18,
   },
   friendDetails: {

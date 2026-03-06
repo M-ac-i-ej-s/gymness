@@ -305,7 +305,17 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
       return;
     }
 
-    setIsAuthenticating(true);
+    const previousEnabled = Boolean(userProfile?.notificationsEnabled ?? true);
+    setUserProfile((prev) => {
+      if (!prev) {
+        return { ...defaultProfile, notificationsEnabled: enabled };
+      }
+
+      return {
+        ...prev,
+        notificationsEnabled: enabled,
+      };
+    });
     setErrorMessage(null);
 
     try {
@@ -313,8 +323,17 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
         const result = await enableNotifications();
 
         if (!result.success) {
+          setUserProfile((prev) => {
+            if (!prev) {
+              return { ...defaultProfile, notificationsEnabled: previousEnabled };
+            }
+
+            return {
+              ...prev,
+              notificationsEnabled: previousEnabled,
+            };
+          });
           setErrorMessage('Could not enable notifications. Check device settings.');
-          setIsAuthenticating(false);
           return;
         }
 
@@ -330,11 +349,19 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
         });
       }
     } catch (error: any) {
+      setUserProfile((prev) => {
+        if (!prev) {
+          return { ...defaultProfile, notificationsEnabled: previousEnabled };
+        }
+
+        return {
+          ...prev,
+          notificationsEnabled: previousEnabled,
+        };
+      });
       setErrorMessage(`Settings save error: ${error.message ?? fallbackError}`);
-    } finally {
-      setIsAuthenticating(false);
     }
-  }, [user]);
+  }, [user, userProfile?.notificationsEnabled]);
 
   const updateNickname = useCallback(async (nickname: string) => {
     if (!user) {
@@ -390,7 +417,17 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
       return;
     }
 
-    setIsAuthenticating(true);
+    const previousPrivate = Boolean(userProfile?.isPrivate ?? false);
+    setUserProfile((prev) => {
+      if (!prev) {
+        return { ...defaultProfile, isPrivate };
+      }
+
+      return {
+        ...prev,
+        isPrivate,
+      };
+    });
     setErrorMessage(null);
 
     try {
@@ -398,11 +435,19 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
         isPrivate,
       });
     } catch (error: any) {
+      setUserProfile((prev) => {
+        if (!prev) {
+          return { ...defaultProfile, isPrivate: previousPrivate };
+        }
+
+        return {
+          ...prev,
+          isPrivate: previousPrivate,
+        };
+      });
       setErrorMessage(`Settings save error: ${error.message ?? fallbackError}`);
-    } finally {
-      setIsAuthenticating(false);
     }
-  }, [user]);
+  }, [user, userProfile?.isPrivate]);
 
   const forgotPassword = useCallback(async (email: string) => {
     setIsAuthenticating(true);
