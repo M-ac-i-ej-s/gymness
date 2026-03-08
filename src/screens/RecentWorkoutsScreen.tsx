@@ -23,7 +23,10 @@ type Props = NativeStackScreenProps<UserStackParamList, 'RecentWorkouts'>;
 
 export const RecentWorkoutsScreen: React.FC<Props> = ({ navigation }) => {
   const { recentSessions, isLoading, fetchRecentSessions } = useWorkout();
+  const DATE_SECTION_PAGE_SIZE = 5;
+
   const [refreshing, setRefreshing] = useState(false);
+  const [visibleDateSections, setVisibleDateSections] = useState(DATE_SECTION_PAGE_SIZE);
 
   useEffect(() => {
     fetchRecentSessions();
@@ -62,6 +65,13 @@ export const RecentWorkoutsScreen: React.FC<Props> = ({ navigation }) => {
     return aVal - bVal;
   });
 
+  useEffect(() => {
+    setVisibleDateSections(DATE_SECTION_PAGE_SIZE);
+  }, [recentSessions.length]);
+
+  const visibleDates = sortedDates.slice(0, visibleDateSections);
+  const hasMoreDateSections = visibleDateSections < sortedDates.length;
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -94,7 +104,7 @@ export const RecentWorkoutsScreen: React.FC<Props> = ({ navigation }) => {
             />
           }
         >
-          {sortedDates.map((dateKey) => (
+          {visibleDates.map((dateKey) => (
             <View key={dateKey} style={styles.section}>
               <Text style={styles.dateHeader}>{dateKey}</Text>
               {Object.entries(groupedByDateAndWorkout[dateKey]).map(([workoutName, sessions]) => (
@@ -118,6 +128,18 @@ export const RecentWorkoutsScreen: React.FC<Props> = ({ navigation }) => {
               ))}
             </View>
           ))}
+
+          {hasMoreDateSections && (
+            <Pressable
+              style={styles.loadMoreButton}
+              onPress={() =>
+                setVisibleDateSections((prev) => Math.min(prev + DATE_SECTION_PAGE_SIZE, sortedDates.length))
+              }
+            >
+              <Text style={styles.loadMoreButtonText}>Załaduj więcej dni</Text>
+              <Ionicons name="chevron-down" size={16} color={colors.primary} />
+            </Pressable>
+          )}
         </ScrollView>
       )}
     </View>
@@ -312,5 +334,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: colors.success,
+  },
+  loadMoreButton: {
+    marginTop: 4,
+    marginBottom: 20,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  loadMoreButtonText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

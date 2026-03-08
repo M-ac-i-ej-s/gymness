@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,23 @@ type WorkoutsListScreenProps = NativeStackScreenProps<
 
 export const WorkoutsListScreen: React.FC<WorkoutsListScreenProps> = ({ navigation }) => {
   const { workouts, deleteWorkout, getExerciseById } = useWorkout();
+  const WORKOUTS_PAGE_SIZE = 15;
+  const [visibleCount, setVisibleCount] = useState(WORKOUTS_PAGE_SIZE);
+
+  const visibleWorkouts = workouts.slice(0, visibleCount);
+  const hasMoreWorkouts = visibleCount < workouts.length;
+
+  useEffect(() => {
+    setVisibleCount(WORKOUTS_PAGE_SIZE);
+  }, [workouts.length]);
+
+  const loadMoreWorkouts = () => {
+    if (!hasMoreWorkouts) {
+      return;
+    }
+
+    setVisibleCount((prev) => Math.min(prev + WORKOUTS_PAGE_SIZE, workouts.length));
+  };
 
   const handleDeleteWorkout = (workoutId: string, workoutName: string) => {
     Alert.alert(
@@ -67,7 +84,7 @@ export const WorkoutsListScreen: React.FC<WorkoutsListScreenProps> = ({ navigati
         </View>
       ) : (
         <FlatList
-          data={workouts}
+          data={visibleWorkouts}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <View style={styles.workoutItem}>
@@ -96,6 +113,8 @@ export const WorkoutsListScreen: React.FC<WorkoutsListScreenProps> = ({ navigati
             </View>
           )}
           contentContainerStyle={styles.listContent}
+          onEndReached={loadMoreWorkouts}
+          onEndReachedThreshold={0.3}
           scrollEnabled
         />
       )}

@@ -9,6 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -63,12 +64,17 @@ const getTimeAgo = (timestamp: any): string => {
 export const CommunityLeaderboardScreen: React.FC<Props> = ({ route, navigation }) => {
   const { exerciseKey, exerciseName } = route.params;
   const { user, userProfile } = useAuth();
+  const LEADERBOARD_PAGE_SIZE = 15;
 
   const [friendsWorkouts, setFriendsWorkouts] = useState<FriendWorkout[]>([]);
   const [mySessions, setMySessions] = useState<WorkoutSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingAvatars, setLoadingAvatars] = useState<Record<string, boolean>>({});
+  const [visibleRestRowsCount, setVisibleRestRowsCount] = useState(LEADERBOARD_PAGE_SIZE);
+  const [ownSessionsCursor, setOwnSessionsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreOwnSessions, setHasMoreOwnSessions] = useState(false);
+  const [loadingMoreOwnSessions, setLoadingMoreOwnSessions] = useState(false);
 
   const getInitials = useCallback((nickname?: string) => {
     if (!nickname) return '?';
@@ -84,13 +90,16 @@ export const CommunityLeaderboardScreen: React.FC<Props> = ({ route, navigation 
     if (!user) return;
 
     try {
-      const [workouts, ownSessions] = await Promise.all([
+      const [workouts, ownSessionsPage] = await Promise.all([
         repository.fetchAllFriendsRecentWorkouts(user.uid, 150),
-        repository.fetchRecentWorkoutSessions(user.uid, 300),
+        repository.fetchRecentWorkoutSessionsPage(user.uid, 120, null),
       ]);
 
       setFriendsWorkouts(workouts);
-      setMySessions(ownSessions);
+      setMySessions(ownSessionsPage.items);
+      setVisibleRestRowsCount(LEADERBOARD_PAGE_SIZE);
+      setOwnSessionsCursor(ownSessionsPage.cursor);
+      setHasMoreOwnSessions(ownSessionsPage.hasMore);
     } catch (error) {
       console.error('Error loading leaderboard data:', error);
     } finally {
@@ -166,6 +175,37 @@ export const CommunityLeaderboardScreen: React.FC<Props> = ({ route, navigation 
   const podiumSecond = leaderboard[1];
   const podiumThird = leaderboard[2];
   const restRows = leaderboard.slice(3);
+  const visibleRestRows = restRows.slice(0, visibleRestRowsCount);
+
+  const loadMoreRows = () => {
+    if (loadingMoreOwnSessions) {
+      return;
+    }
+
+    if (visibleRestRowsCount >= restRows.length) {
+      if (!hasMoreOwnSessions || !user) {
+        return;
+      }
+
+      setLoadingMoreOwnSessions(true);
+      repository
+        .fetchRecentWorkoutSessionsPage(user.uid, 120, ownSessionsCursor)
+        .then((nextPage) => {
+          setMySessions((prev) => [...prev, ...nextPage.items]);
+          setOwnSessionsCursor(nextPage.cursor);
+          setHasMoreOwnSessions(nextPage.hasMore);
+        })
+        .catch((error) => {
+          console.error('Error loading more leaderboard sessions:', error);
+        })
+        .finally(() => {
+          setLoadingMoreOwnSessions(false);
+        });
+      return;
+    }
+
+    setVisibleRestRowsCount((prev) => Math.min(prev + LEADERBOARD_PAGE_SIZE, restRows.length));
+  };
 
   const renderPodiumCard = (
     entry: LeaderboardEntry | undefined,
@@ -266,10 +306,12 @@ export const CommunityLeaderboardScreen: React.FC<Props> = ({ route, navigation 
         </View>
       ) : (
         <FlatList
-          data={restRows}
+          data={visibleRestRows}
           keyExtractor={(item) => item.userId}
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          onEndReached={loadMoreRows}
+          onEndReachedThreshold={0.3}
           ListHeaderComponent={
             <View>
               <View style={styles.podiumContainer}>

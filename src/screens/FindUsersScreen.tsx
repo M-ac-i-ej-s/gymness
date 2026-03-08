@@ -10,6 +10,7 @@ import {
   View,
   Alert,
 } from 'react-native';
+import { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors } from '../theme/colors';
@@ -23,6 +24,8 @@ type Props = NativeStackScreenProps<UserStackParamList, 'FindUsers'>;
 
 export const FindUsersScreen = ({ navigation }: Props) => {
   const { user, userProfile } = useAuth();
+  const SEARCH_PAGE_SIZE = 12;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<UserPublicProfile[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -34,6 +37,10 @@ export const FindUsersScreen = ({ navigation }: Props) => {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [displayedFriendsCount, setDisplayedFriendsCount] = useState(5);
   const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+  const [visibleSearchCount, setVisibleSearchCount] = useState(SEARCH_PAGE_SIZE);
+  const [searchCursor, setSearchCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreSearchResults, setHasMoreSearchResults] = useState(false);
+  const [isLoadingMoreSearch, setIsLoadingMoreSearch] = useState(false);
   
   // Track previous friend requests to detect new ones
   const previousFriendRequestIds = useRef<Set<string>>(new Set());
@@ -93,15 +100,22 @@ export const FindUsersScreen = ({ navigation }: Props) => {
   const performSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
       setSearchResults([]);
+      setVisibleSearchCount(SEARCH_PAGE_SIZE);
+      setSearchCursor(null);
+      setHasMoreSearchResults(false);
       return;
     }
 
     setIsSearching(true);
     try {
-      const results = await repository.searchUsersByNickname(query.trim());
+      const firstPage = await repository.searchUsersByNicknamePage(query.trim(), SEARCH_PAGE_SIZE, null);
+      const results = firstPage.items;
       // Filter out current user from results
       const filteredResults = results.filter((u) => u.id !== user?.uid);
       setSearchResults(filteredResults);
+      setVisibleSearchCount(SEARCH_PAGE_SIZE);
+      setSearchCursor(firstPage.cursor);
+      setHasMoreSearchResults(firstPage.hasMore);
 
       // Check friend status for each result
       const statuses: Record<string, 'friends' | 'pending' | 'none'> = {};
@@ -118,7 +132,7 @@ export const FindUsersScreen = ({ navigation }: Props) => {
     } finally {
       setIsSearching(false);
     }
-  }, [user?.uid]);
+  }, [SEARCH_PAGE_SIZE, user?.uid]);
 
   const handleAddFriend = useCallback(
     async (friendId: string, friendNickname?: string, friendPhotoURL?: string) => {
@@ -344,6 +358,54 @@ export const FindUsersScreen = ({ navigation }: Props) => {
     );
   };
 
+  const visibleSearchResults = searchResults.slice(0, visibleSearchCount);
+
+  const loadMoreSearchResults = () => {
+    if (isLoadingMoreSearch || isSearching) {
+      return;
+    }
+
+    if (visibleSearchCount < searchResults.length) {
+      setVisibleSearchCount((prev) => Math.min(prev + SEARCH_PAGE_SIZE, searchResults.length));
+      return;
+    }
+
+    if (!hasMoreSearchResults || !searchQuery.trim()) {
+      return;
+    }
+
+    setIsLoadingMoreSearch(true);
+    repository
+      .searchUsersByNicknamePage(searchQuery.trim(), SEARCH_PAGE_SIZE, searchCursor)
+      .then(async (nextPage) => {
+        const filteredResults = nextPage.items.filter((u) => u.id !== user?.uid);
+
+        setSearchResults((prev) => {
+          const merged = [...prev, ...filteredResults];
+          return merged.filter((entry, index, self) => index === self.findIndex((u) => u.id === entry.id));
+        });
+
+        setSearchCursor(nextPage.cursor);
+        setHasMoreSearchResults(nextPage.hasMore);
+
+        const newStatuses: Record<string, 'friends' | 'pending' | 'none'> = {};
+        for (const result of filteredResults) {
+          if (user?.uid) {
+            const status = await repository.checkFriendStatus(user.uid, result.id);
+            newStatuses[result.id] = status;
+          }
+        }
+
+        setFriendStatuses((prev) => ({ ...prev, ...newStatuses }));
+      })
+      .catch((error) => {
+        console.error('Error loading more search results:', error);
+      })
+      .finally(() => {
+        setIsLoadingMoreSearch(false);
+      });
+  };
+
   return (
     <View style={styles.container}>
       {/* Friend Requests Section - Always visible */}
@@ -441,10 +503,12 @@ export const FindUsersScreen = ({ navigation }: Props) => {
 
         {!isSearching && searchResults.length > 0 && (
           <FlatList
-            data={searchResults}
+            data={visibleSearchResults}
             renderItem={renderUserItem}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.listContainer}
+            onEndReached={loadMoreSearchResults}
+            onEndReachedThreshold={0.3}
             scrollEnabled={true}
           />
         )}

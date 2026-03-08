@@ -25,11 +25,14 @@ interface ExerciseListScreenProps {
 export const ExerciseListScreen: React.FC<ExerciseListScreenProps> = ({ onSelectExercise, onStartWorkout }) => {
   const { exercises, createExercise } = useWorkout();
   const { showAddDialog, setShowAddDialog } = useAddExerciseDialog();
+  const EXERCISES_PAGE_SIZE = 20;
+
   const [name, setName] = useState('');
   const [type, setType] = useState<ExerciseType>('COMPOUND');
   const [goal, setGoal] = useState<TrainingGoal>('HYPERTROPHY');
   const [sets, setSets] = useState('3');
   const [weight, setWeight] = useState('0');
+  const [visibleCount, setVisibleCount] = useState(EXERCISES_PAGE_SIZE);
 
   const POPULAR_EXERCISES: Array<{ name: string; type: ExerciseType }> = [
     { name: 'Przysiad ze sztangą', type: 'COMPOUND' },
@@ -56,6 +59,20 @@ export const ExerciseListScreen: React.FC<ExerciseListScreenProps> = ({ onSelect
 
   const selectedPopularExercise = POPULAR_EXERCISES.find((exercise) => exercise.name === name.trim());
   const isTypeLocked = Boolean(selectedPopularExercise);
+  const visibleExercises = exercises.slice(0, visibleCount);
+  const hasMoreExercises = visibleCount < exercises.length;
+
+  useEffect(() => {
+    setVisibleCount(EXERCISES_PAGE_SIZE);
+  }, [exercises.length]);
+
+  const loadMoreExercises = () => {
+    if (!hasMoreExercises) {
+      return;
+    }
+
+    setVisibleCount((prev) => Math.min(prev + EXERCISES_PAGE_SIZE, exercises.length));
+  };
 
   const closeDialog = () => {
     setShowAddDialog(false);
@@ -109,7 +126,7 @@ export const ExerciseListScreen: React.FC<ExerciseListScreenProps> = ({ onSelect
         </View>
       ) : (
         <FlatList
-          data={exercises}
+          data={visibleExercises}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <ExerciseItem
@@ -119,6 +136,8 @@ export const ExerciseListScreen: React.FC<ExerciseListScreenProps> = ({ onSelect
             />
           )}
           contentContainerStyle={styles.listContent}
+          onEndReached={loadMoreExercises}
+          onEndReachedThreshold={0.3}
           scrollEnabled
           nestedScrollEnabled
         />

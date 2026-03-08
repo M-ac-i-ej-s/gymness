@@ -1,4 +1,6 @@
 import {
+  DocumentData,
+  QueryDocumentSnapshot,
   Timestamp,
   addDoc,
   collection,
@@ -12,6 +14,7 @@ import {
   query,
   setDoc,
   serverTimestamp,
+  startAfter,
   updateDoc,
   writeBatch,
   where,
@@ -104,6 +107,14 @@ const isValidFirestoreUserId = (value: unknown): value is string => {
 const FRIEND_REQUEST_COOLDOWN_MS = 15_000;
 const friendRequestCooldownBySender = new Map<string, number>();
 
+type PaginationCursor = QueryDocumentSnapshot<DocumentData> | null;
+
+type PaginationResult<T> = {
+  items: T[];
+  cursor: PaginationCursor;
+  hasMore: boolean;
+};
+
 export const repository = {
   observeExercises(userId: string, callback: (rows: Exercise[]) => void, onError: (e: Error) => void) {
     const exercisesCollection = userCollection(userId, 'exercises');
@@ -154,6 +165,27 @@ export const repository = {
     const snapshot = await getDocs(q);
     const sessions = snapshot.docs.map((d) => toWorkoutSession(d.id, d.data()));
     return sessions;
+  },
+
+  async fetchRecentWorkoutSessionsPage(
+    userId: string,
+    pageSize = 40,
+    cursor: PaginationCursor = null,
+  ): Promise<PaginationResult<WorkoutSession>> {
+    const workoutSessionsCollection = userCollection(userId, 'workoutSessions');
+    const q = cursor
+      ? query(workoutSessionsCollection, orderBy('date', 'desc'), startAfter(cursor), limit(pageSize + 1))
+      : query(workoutSessionsCollection, orderBy('date', 'desc'), limit(pageSize + 1));
+
+    const snapshot = await getDocs(q);
+    const hasMore = snapshot.docs.length > pageSize;
+    const pageDocs = hasMore ? snapshot.docs.slice(0, pageSize) : snapshot.docs;
+
+    return {
+      items: pageDocs.map((doc) => toWorkoutSession(doc.id, doc.data())),
+      cursor: pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : cursor,
+      hasMore,
+    };
   },
 
   async createExercise(userId: string, data: Omit<Exercise, 'id' | 'createdAt' | 'lastUpdated'>) {
@@ -227,73 +259,86 @@ export const repository = {
 
   // Friends management methods
   async searchUsersByNickname(nickname: string): Promise<UserPublicProfile[]> {
+    const { items } = await this.searchUsersByNicknamePage(nickname, 50, null);
+    return items;
+  },
+
+  async searchUsersByNicknamePage(
+    nickname: string,
+    pageSize = 20,
+    cursor: PaginationCursor = null,
+  ): Promise<PaginationResult<UserPublicProfile>> {
     if (!nickname || nickname.trim().length === 0) {
-      return [];
+      return {
+        items: [],
+        cursor,
+        hasMore: false,
+      };
     }
 
     try {
       const usersRef = collection(db, 'users');
       const searchTerm = nickname.trim().toLowerCase();
-      
-      // Try searching using nicknameLowercase field for case-insensitive search
-      const q = query(usersRef, where('nicknameLowercase', '>=', searchTerm), where('nicknameLowercase', '<=', searchTerm + '\uf8ff'), limit(50));
-      const snapshot = await getDocs(q);
-      
-      // If nicknameLowercase field exists for some users, use those results
-      if (!snapshot.empty) {
-        return snapshot.docs.map((doc) => ({
-          id: doc.id,
-          nickname: doc.data().nickname,
-          photoURL: doc.data().photoURL,
-        }));
+
+      const primaryQuery = cursor
+        ? query(
+            usersRef,
+            where('nicknameLowercase', '>=', searchTerm),
+            where('nicknameLowercase', '<=', searchTerm + '\uf8ff'),
+            orderBy('nicknameLowercase'),
+            startAfter(cursor),
+            limit(pageSize + 1),
+          )
+        : query(
+            usersRef,
+            where('nicknameLowercase', '>=', searchTerm),
+            where('nicknameLowercase', '<=', searchTerm + '\uf8ff'),
+            orderBy('nicknameLowercase'),
+            limit(pageSize + 1),
+          );
+
+      const snapshot = await getDocs(primaryQuery);
+
+      // Backward compatibility fallback: old profiles without nicknameLowercase.
+      if (snapshot.empty && !cursor) {
+        const legacyQuery = query(
+          usersRef,
+          where('nickname', '>=', nickname.trim()),
+          where('nickname', '<=', nickname.trim() + '\uf8ff'),
+          limit(pageSize),
+        );
+
+        const legacySnapshot = await getDocs(legacyQuery);
+        return {
+          items: legacySnapshot.docs.map((doc) => ({
+            id: doc.id,
+            nickname: doc.data().nickname,
+            photoURL: doc.data().photoURL,
+          })),
+          cursor: null,
+          hasMore: false,
+        };
       }
-      
-      // Fallback: search with original case and filter client-side
-      // This handles backward compatibility for users without nicknameLowercase field
-      const originalQuery = query(usersRef, where('nickname', '>=', nickname.trim()), where('nickname', '<=', nickname.trim() + '\uf8ff'), limit(50));
-      const originalSnapshot = await getDocs(originalQuery);
-      
-      const results = originalSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        nickname: doc.data().nickname,
-        photoURL: doc.data().photoURL,
-      }));
-      
-      // Also search with lowercase and uppercase first letter for better matching
-      const lowerFirstQuery = query(usersRef, where('nickname', '>=', searchTerm), where('nickname', '<=', searchTerm + '\uf8ff'), limit(50));
-      const lowerSnapshot = await getDocs(lowerFirstQuery);
-      
-      const upperFirstChar = nickname.trim().charAt(0).toUpperCase() + nickname.trim().slice(1).toLowerCase();
-      const upperFirstQuery = query(usersRef, where('nickname', '>=', upperFirstChar), where('nickname', '<=', upperFirstChar + '\uf8ff'), limit(50));
-      const upperSnapshot = await getDocs(upperFirstQuery);
-      
-      // Combine results and remove duplicates
-      const allResults = [
-        ...results,
-        ...lowerSnapshot.docs.map((doc) => ({
+
+      const hasMore = snapshot.docs.length > pageSize;
+      const pageDocs = hasMore ? snapshot.docs.slice(0, pageSize) : snapshot.docs;
+
+      return {
+        items: pageDocs.map((doc) => ({
           id: doc.id,
           nickname: doc.data().nickname,
           photoURL: doc.data().photoURL,
         })),
-        ...upperSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          nickname: doc.data().nickname,
-          photoURL: doc.data().photoURL,
-        })),
-      ];
-      
-      // Remove duplicates based on id
-      const uniqueResults = allResults.filter((user, index, self) =>
-        index === self.findIndex((u) => u.id === user.id)
-      );
-      
-      // Filter to only include users whose nickname contains the search term (case-insensitive)
-      return uniqueResults.filter(user =>
-        user.nickname?.toLowerCase().includes(searchTerm)
-      );
+        cursor: pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : cursor,
+        hasMore,
+      };
     } catch (error) {
       console.error('Error searching users:', error);
-      return [];
+      return {
+        items: [],
+        cursor,
+        hasMore: false,
+      };
     }
   },
 
@@ -525,24 +570,66 @@ export const repository = {
   },
 
   async fetchCommunityPosts(friendIds: string[], itemLimit = 50): Promise<CommunityPost[]> {
+    const { items } = await this.fetchCommunityPostsPage(friendIds, itemLimit, null);
+    return items;
+  },
+
+  async fetchCommunityPostsPage(
+    friendIds: string[],
+    pageSize = 20,
+    cursor: PaginationCursor = null,
+  ): Promise<PaginationResult<CommunityPost>> {
     try {
       if (friendIds.length === 0) {
-        return [];
+        return {
+          items: [],
+          cursor,
+          hasMore: false,
+        };
+      }
+
+      const normalizedFriendIds = friendIds.filter(isValidFirestoreUserId).slice(0, 10);
+
+      if (normalizedFriendIds.length === 0) {
+        return {
+          items: [],
+          cursor,
+          hasMore: false,
+        };
       }
 
       const postsRef = collection(db, 'communityPosts');
-      const q = query(
-        postsRef,
-        where('userId', 'in', friendIds),
-        orderBy('createdAt', 'desc'),
-        limit(itemLimit)
-      );
+      const q = cursor
+        ? query(
+            postsRef,
+            where('userId', 'in', normalizedFriendIds),
+            orderBy('createdAt', 'desc'),
+            startAfter(cursor),
+            limit(pageSize + 1),
+          )
+        : query(
+            postsRef,
+            where('userId', 'in', normalizedFriendIds),
+            orderBy('createdAt', 'desc'),
+            limit(pageSize + 1),
+          );
       
       const snapshot = await getDocs(q);
-      return snapshot.docs.map((doc) => toCommunityPost(doc.id, doc.data()));
+      const hasMore = snapshot.docs.length > pageSize;
+      const pageDocs = hasMore ? snapshot.docs.slice(0, pageSize) : snapshot.docs;
+
+      return {
+        items: pageDocs.map((doc) => toCommunityPost(doc.id, doc.data())),
+        cursor: pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : cursor,
+        hasMore,
+      };
     } catch (error) {
       console.error('Error fetching community posts:', error);
-      return [];
+      return {
+        items: [],
+        cursor,
+        hasMore: false,
+      };
     }
   },
 

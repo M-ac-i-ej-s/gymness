@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
+import { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors } from '../theme/colors';
@@ -57,6 +58,10 @@ const getTimeAgo = (timestamp: any): string => {
 
 export const CommunityScreen: React.FC<Props> = ({ navigation }) => {
   const { user, userProfile } = useAuth();
+  const NEWS_PAGE_SIZE = 20;
+  const RANKING_PAGE_SIZE = 10;
+  const RANKING_SOURCE_PAGE_SIZE = 80;
+
   const [section, setSection] = useState<CommunitySection>('NEWS');
   const [friendsWorkouts, setFriendsWorkouts] = useState<FriendWorkout[]>([]);
   const [communityPosts, setCommunityPosts] = useState<CommunityPost[]>([]);
@@ -64,6 +69,14 @@ export const CommunityScreen: React.FC<Props> = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [friendIds, setFriendIds] = useState<string[]>([]);
+  const [visiblePostsCount, setVisiblePostsCount] = useState(NEWS_PAGE_SIZE);
+  const [visibleRankingCount, setVisibleRankingCount] = useState(RANKING_PAGE_SIZE);
+  const [postsCursor, setPostsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [sessionsCursor, setSessionsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMorePosts, setHasMorePosts] = useState(false);
+  const [hasMoreSessions, setHasMoreSessions] = useState(false);
+  const [loadingMorePosts, setLoadingMorePosts] = useState(false);
+  const [loadingMoreSessions, setLoadingMoreSessions] = useState(false);
 
   const loadCommunityData = async () => {
     if (!user) return;
@@ -74,13 +87,19 @@ export const CommunityScreen: React.FC<Props> = ({ navigation }) => {
       const friendIds = [user.uid, ...friends.map(f => f.userId)]; // Include own ID to see own posts
       setFriendIds(friendIds);
 
-      // Fetch community posts from friends and self
-      const posts = await repository.fetchCommunityPosts(friendIds, 50);
-      setCommunityPosts(posts);
+      // Fetch first backend page of community posts.
+      const postsPage = await repository.fetchCommunityPostsPage(friendIds, NEWS_PAGE_SIZE, null);
+      setCommunityPosts(postsPage.items);
+      setVisiblePostsCount(NEWS_PAGE_SIZE);
+      setPostsCursor(postsPage.cursor);
+      setHasMorePosts(postsPage.hasMore);
 
-      // Fetch user's own sessions for rankings
-      const ownSessions = await repository.fetchRecentWorkoutSessions(user.uid, 200);
-      setMySessions(ownSessions);
+      // Fetch first backend page of own sessions used as ranking source.
+      const sessionsPage = await repository.fetchRecentWorkoutSessionsPage(user.uid, RANKING_SOURCE_PAGE_SIZE, null);
+      setMySessions(sessionsPage.items);
+      setVisibleRankingCount(RANKING_PAGE_SIZE);
+      setSessionsCursor(sessionsPage.cursor);
+      setHasMoreSessions(sessionsPage.hasMore);
     } catch (error) {
       console.error('Error loading community data:', error);
     } finally {
@@ -147,6 +166,69 @@ export const CommunityScreen: React.FC<Props> = ({ navigation }) => {
 
     return [...grouped.values()].sort((a, b) => b.latestDate.toMillis() - a.latestDate.toMillis());
   }, [mySessions]);
+
+  const visiblePosts = communityPosts.slice(0, visiblePostsCount);
+  const visibleRankings = rankingExercises.slice(0, visibleRankingCount);
+
+  const loadMorePosts = () => {
+    if (loadingMorePosts) {
+      return;
+    }
+
+    if (visiblePostsCount < communityPosts.length) {
+      setVisiblePostsCount((prev) => Math.min(prev + NEWS_PAGE_SIZE, communityPosts.length));
+      return;
+    }
+
+    if (!hasMorePosts || !friendIds.length) {
+      return;
+    }
+
+    setLoadingMorePosts(true);
+    repository
+      .fetchCommunityPostsPage(friendIds, NEWS_PAGE_SIZE, postsCursor)
+      .then((nextPage) => {
+        setCommunityPosts((prev) => [...prev, ...nextPage.items]);
+        setPostsCursor(nextPage.cursor);
+        setHasMorePosts(nextPage.hasMore);
+      })
+      .catch((error) => {
+        console.error('Error loading more community posts:', error);
+      })
+      .finally(() => {
+        setLoadingMorePosts(false);
+      });
+  };
+
+  const loadMoreRankings = () => {
+    if (loadingMoreSessions) {
+      return;
+    }
+
+    if (visibleRankingCount < rankingExercises.length) {
+      setVisibleRankingCount((prev) => Math.min(prev + RANKING_PAGE_SIZE, rankingExercises.length));
+      return;
+    }
+
+    if (!hasMoreSessions || !user) {
+      return;
+    }
+
+    setLoadingMoreSessions(true);
+    repository
+      .fetchRecentWorkoutSessionsPage(user.uid, RANKING_SOURCE_PAGE_SIZE, sessionsCursor)
+      .then((nextPage) => {
+        setMySessions((prev) => [...prev, ...nextPage.items]);
+        setSessionsCursor(nextPage.cursor);
+        setHasMoreSessions(nextPage.hasMore);
+      })
+      .catch((error) => {
+        console.error('Error loading more ranking sessions:', error);
+      })
+      .finally(() => {
+        setLoadingMoreSessions(false);
+      });
+  };
 
   if (loading) {
     return (
@@ -237,11 +319,13 @@ export const CommunityScreen: React.FC<Props> = ({ navigation }) => {
           )}
           {!refreshing || communityPosts.length > 0 ? (
             <FlatList
-              data={communityPosts}
+              data={visiblePosts}
               keyExtractor={(item) => item.id}
               renderItem={({ item }) => <CommunityPostCard post={item} />}
               contentContainerStyle={styles.listContent}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+              onEndReached={loadMorePosts}
+              onEndReachedThreshold={0.3}
               scrollEnabled={true}
               nestedScrollEnabled={true}
             />
@@ -264,7 +348,7 @@ export const CommunityScreen: React.FC<Props> = ({ navigation }) => {
           )}
           {!refreshing ? (
             <FlatList
-              data={rankingExercises}
+              data={visibleRankings}
               keyExtractor={(item) => item.key}
               renderItem={({ item }) => {
                 return (
@@ -291,6 +375,8 @@ export const CommunityScreen: React.FC<Props> = ({ navigation }) => {
               contentContainerStyle={styles.listContent}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
               ListHeaderComponent={<Text style={styles.rankingListTitle}>Twoje ćwiczenia</Text>}
+              onEndReached={loadMoreRankings}
+              onEndReachedThreshold={0.3}
             />
           ) : null}
         </>
